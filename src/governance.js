@@ -1,4 +1,4 @@
-import { defaultJudgePrompt, agentTrajectory, judgeProfile } from './evaluate.js';
+import { defaultJudgePrompt, agentTrajectory, judgeProfile, upgradeRegressionSummary } from './evaluate.js';
 import { redact, redactTree } from './privacy.js';
 
 export const gateDefaults = {
@@ -28,8 +28,7 @@ export function recordDataset(state, reason, advance = true) {
   return entry;
 }
 
-export function upgradeState(state) {
-  if (state.schemaVersion === 2) return state;
+function upgradeLegacyState(state) {
   // Preserve relational identifiers while masking all legacy text at rest.
   const traceIds = state.traces.map(trace => trace.id);
   const references = [...state.cases, ...state.golden].map(item => item.traceId);
@@ -68,7 +67,14 @@ export function upgradeState(state) {
   for (const review of state.reviews) {
     if (review.mode === 'llm') review.judgeVersion ??= state.config.activeJudge;
   }
-  state.schemaVersion = 2;
+}
+
+export const workspaceSchemaVersion = 3;
+export function upgradeState(state) {
+  if (state.schemaVersion === workspaceSchemaVersion) return state;
+  if (state.schemaVersion !== 2) upgradeLegacyState(state);
+  for (const run of state.runs) upgradeRegressionSummary(run);
+  state.schemaVersion = workspaceSchemaVersion;
   return state;
 }
 

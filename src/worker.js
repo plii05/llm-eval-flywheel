@@ -1,8 +1,8 @@
-import { upgradeState, recordDataset, datasetVersion, datasetDetail, viewGovernance, gateSnapshot, onlineDefaults, eligibleRun, assertEvalIsolation, markTrainingExport } from './governance.js';
+import { upgradeState, workspaceSchemaVersion, recordDataset, datasetVersion, datasetDetail, viewGovernance, gateSnapshot, onlineDefaults, eligibleRun, assertEvalIsolation, markTrainingExport } from './governance.js';
 import { stableBucket, queueInspection, inspectTrace, canaryStats, checkCanary, groupCases, makeVariants, comparePlayground } from './operations.js';
 import { redact, redactTree, safeIdentifier } from './privacy.js';
 import { seed, causes, feedbackTypes, dateAgo } from './seed.js';
-import { regression, agreement, replayMetrics, mapLimited, agentTrajectory, judgeProfile, externalToolIsolation } from './evaluate.js';
+import { regression, agreement, replayMetrics, mapLimited, agentTrajectory, judgeProfile, externalToolIsolation, replayComplete } from './evaluate.js';
 
 const demoRuns = [
   ['EV-0842', 'v2.4.0', 'v2.3.1', 0, 28],
@@ -49,7 +49,7 @@ async function load(db) {
     row = await db.prepare('SELECT revision, body FROM flywheel_state WHERE id = 1').first();
   }
   const state = JSON.parse(row.body);
-  if (state.schemaVersion === 2) return { revision: row.revision, state };
+  if (state.schemaVersion === workspaceSchemaVersion) return { revision: row.revision, state };
   upgradeState(state);
   const updated = await db.prepare('UPDATE flywheel_state SET body = ?, revision = revision + 1 WHERE id = 1 AND revision = ?').bind(JSON.stringify(state), row.revision).run();
   return updated.meta.changes === 1 ? { revision: row.revision + 1, state } : load(db);
@@ -242,7 +242,8 @@ function newReview(state, body) {
   const run = find(state.runs, body.runId, '评测');
   if (run.judgeMode !== 'llm' && body.realJudgeOnly === true) bad('该评测未使用模型裁判。');
   const already = new Set(state.reviews.filter(r => r.runId === run.id).map(r => r.sampleId));
-  const options = run.rows.filter(row => row.candidate.judge && row.baseline.judge && row.candidate.output !== row.baseline.output && !already.has(row.id));
+  const options = run.rows.filter(row => replayComplete(row.baseline) && replayComplete(row.candidate) &&
+    row.candidate.judge && row.baseline.judge && row.candidate.output !== row.baseline.output && !already.has(row.id));
   if (!options.length) bad('这次评测没有剩余可盲评的双裁判对照样本。', 409);
   const sample = options[crypto.getRandomValues(new Uint32Array(1))[0] % options.length];
   const swap = crypto.getRandomValues(new Uint8Array(1))[0] % 2 === 1;
@@ -530,6 +531,7 @@ async function api(request, env, context) {
       const run = find(state.runs, body.runId, '评测');
       const row = find(run.rows, body.sampleId, '样本');
       const sample = find([...state.golden, ...state.sampleArchive], row.id, '样本');
+      if (!replayComplete(row.candidate)) bad('回放完成后才能归因。', 409);
       if (row.candidate.passed) bad('通过的样本无需归因。');
       const traceId = run.id + '-' + row.id;
       const trace = addTrace(state, { id: traceId, name: row.name, input: row.input, expected: row.reference, output: row.candidate.output,

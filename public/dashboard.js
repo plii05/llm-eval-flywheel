@@ -5,14 +5,14 @@ export function runRows(runs, short = false) {
   return runs.map(run => row([
     mono(run.id), mono(run.candidate), mono(run.baseline), '<span class="num">' + fmt(run.count) + '</span>',
     '<span class="num emphasis">' + pct(run.pass) + '</span>',
-    ...(short ? [] : [mono(run.datasetVersion || '—'), run.judgeMode === 'llm' ? badge([run.judgeModel || t('模型标识未记录'), run.judgeVersion].filter(Boolean).join(' · '), 'info', false) : badge(t('演示评分'), '', false)]),
+    ...(short ? [] : [fmt(run.incomplete?.baseline ?? 0) + ' / ' + fmt(run.incomplete?.candidate ?? 0), mono(run.datasetVersion || '—'), run.judgeMode === 'llm' ? badge([run.judgeModel || t('模型标识未记录'), run.judgeVersion].filter(Boolean).join(' · '), 'info', false) : badge(t('演示评分'), '', false)]),
     gateBadge(run.passed), '<span class="num quiet">' + time(run.createdAt) + '</span>',
     ('<button aria-label="' + t('查看') + ' ') + esc(run.id) + '" type="button" class="icon-button" data-action="run-detail" data-id="' + esc(run.id) + '">' + I('chevron') + '</button>'
   ], 'run-detail', run.id)).join('');
 }
 
 const runHeaders = [t('运行编号'), t('候选版本'), t('基线版本'), t('样本数'), t('通过率')];
-export const runTable = (runs, short = false) => table([...runHeaders, ...(short ? [] : [t('基准快照'), t('裁判')]), t('发布卡点'), t('运行时间'), ''], runRows(runs, short));
+export const runTable = (runs, short = false) => table([...runHeaders, ...(short ? [] : [t('未完成用例（基线 / 候选）'), t('基准快照'), t('裁判')]), t('发布卡点'), t('运行时间'), ''], runRows(runs, short));
 
 function metric(label, tone, icon, value, meta, href) {
   return '<a class="card metric" href="#' + href + '"><div class="metric-top"><span class="metric-icon ' + tone + '">' + I(icon) + '</span>' + label + '</div><div class="metric-value">' + esc(value) + '</div><div class="metric-meta">' + meta + '</div></a>';
@@ -69,14 +69,15 @@ export function chart(state, range) {
   if (!canvas) return;
   const tip = document.querySelector('#chart-tip');
   const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit' });
-  const latest = state.runs[0];
+  const completed = state.runs.filter(run => !run.incomplete?.baseline && !run.incomplete?.candidate);
+  const latest = completed[0];
   const comparable = run => run === latest || (latest.datasetVersion && run.datasetVersion === latest.datasetVersion &&
     run.demo === latest.demo && run.judgeMode === latest.judgeMode &&
     run.gateConfig?.criticalRepeats === latest.gateConfig?.criticalRepeats &&
     run.gateConfig?.stabilityVariance === latest.gateConfig?.stabilityVariance &&
     (run.judgeMode !== 'llm' || (latest.judgeModel && latest.judgeVersion &&
       run.judgeModel === latest.judgeModel && run.judgeVersion === latest.judgeVersion)));
-  const points = range === 0 ? state.sampleTrend : state.runs.filter(comparable).slice(0, 8).reverse()
+  const points = range === 0 ? state.sampleTrend : completed.filter(comparable).slice(0, 8).reverse()
     .map(r => ({ label: formatter.format(new Date(r.createdAt)), pass: r.pass, faith: r.faith, id: r.id }));
   canvas.setAttribute('aria-label', points.map(p => p.label + (' ' + t('通过率') + ' ') + pct(p.pass) + (t('，忠实度') + ' ') + pct(p.faith)).join('；'));
   const ctx = canvas.getContext('2d');

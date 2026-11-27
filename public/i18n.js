@@ -710,6 +710,8 @@ const english = {
   "内置回放 · 无工具执行": "Built-in replay · No tool execution",
   "外部执行器未声明": "External executor did not declare isolation",
   "回放未完成": "Incomplete replay",
+  "未完成用例（基线 / 候选）": "Incomplete cases (baseline / candidate)",
+  "回放完成后才能归因。": "Complete the replay before recording a root cause.",
   "全部通过": "All attempts passed",
   "未全部通过": "Some attempts failed",
   "通过 {passed}/{count} 次（{rate}） · 计划 {required} 次 · 方差 {variance}": "{passed}/{count} passed ({rate}) · {required} planned · Variance {variance}",

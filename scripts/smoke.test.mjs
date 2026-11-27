@@ -73,9 +73,8 @@ test('full external replay overrides fixture output', async t => {
   const call = fixture(t);
   const golden = await call('/api/golden');
   await call('/api/regression', { candidate: 'v2.4.0', observations: {} }, 400);
-  const observations = Object.fromEntries(golden.map(s => [s.id, {
-    baseline: { output: '', tools: [] }, candidate: { output: s.reference, tools: s.tool ? [s.tool] : [] }
-  }]));
+  const observations = replays(golden, (attempt, _sample, side) =>
+    side === 'baseline' ? { ...attempt, output: '', tools: [] } : attempt);
   const run = await call('/api/regression', { candidate: 'v2.4.0', observations }, 201);
   assert.equal(run.demo, false);
   assert.equal(run.pass, 100);
@@ -116,6 +115,69 @@ function replays(samples, edit = value => value) {
     }, sample, side, index))
   ]))]));
 }
+
+test('separates incomplete external replays from passes and failures', async t => {
+  const call = fixture(t);
+  const golden = await call('/api/golden');
+  const key = golden.find(sample => sample.critical).id;
+  const observations = replays(golden);
+  observations[key].candidate = observations[key].candidate[0];
+  const run = await call('/api/regression', { candidate: 'v2.4.0', observations }, 201);
+  const sample = run.rows.find(row => row.id === key);
+  assert.equal(sample.candidate.passed, false);
+  assert.equal(sample.candidate.stability.complete, false);
+  assert.equal(sample.candidate.stability.count, 1);
+  assert.equal(sample.candidate.stability.required, 3);
+  assert.equal(sample.candidate.stability.allPassed, null);
+  assert.equal(run.pass, 95.8);
+  assert.equal(run.baselinePass, 100);
+  assert.equal(run.failures, 0);
+  assert.deepEqual(run.incomplete, { baseline: 0, candidate: 1 });
+  assert.equal(run.passed, false);
+  await call('/api/case/from-run', { runId: run.id, sampleId: key }, 409);
+  await call('/api/release', { runId: run.id, percent: 10 }, 409);
+  assert.deepEqual((await call('/api/state')).runs[0].incomplete, run.incomplete);
+
+  const partialBaseline = replays(golden);
+  partialBaseline[key].baseline = partialBaseline[key].baseline[0];
+  const other = await call('/api/regression', { candidate: 'v2.4.0', observations: partialBaseline }, 201);
+  assert.equal(other.pass, 100);
+  assert.equal(other.baselinePass, 95.8);
+  assert.equal(other.criticalRate, null);
+  assert.equal(other.failures, 0);
+  assert.deepEqual(other.incomplete, { baseline: 1, candidate: 0 });
+  assert.equal(other.passed, false);
+});
+
+test('upgrades saved runs that previously counted partial replays as passes', async t => {
+  const db = sqlite();
+  t.after(() => db.close());
+  const call = fixture(t, { DB: db });
+  const golden = await call('/api/golden');
+  const key = golden.find(sample => sample.critical).id;
+  const observations = replays(golden);
+  observations[key].candidate = observations[key].candidate[0];
+  const original = await call('/api/regression', { candidate: 'v2.4.0', observations }, 201);
+
+  const record = await db.prepare('SELECT body FROM flywheel_state WHERE id = 1').first();
+  const legacy = JSON.parse(record.body);
+  legacy.schemaVersion = 2;
+  for (const run of legacy.runs) delete run.incomplete;
+  const oldRun = legacy.runs.find(run => run.id === original.id);
+  oldRun.pass = 100;
+  oldRun.rows.find(row => row.id === key).candidate.passed = true;
+  await db.prepare('UPDATE flywheel_state SET body = ? WHERE id = 1').bind(JSON.stringify(legacy)).run();
+
+  const migrated = await call('/api/state');
+  assert.equal(migrated.schemaVersion, 3);
+  assert.equal(migrated.runs[0].pass, 95.8);
+  assert.deepEqual(migrated.runs[0].incomplete, { baseline: 0, candidate: 1 });
+  const saved = await call('/api/run?id=' + original.id);
+  assert.equal(saved.rows.find(row => row.id === key).candidate.passed, false);
+  const persisted = JSON.parse((await db.prepare('SELECT body FROM flywheel_state WHERE id = 1').first()).body);
+  assert.equal(persisted.schemaVersion, 3);
+  assert.equal(persisted.runs[0].pass, 95.8);
+});
 
 test('masks PII at ingestion and replays ordered conversation history', async t => {
   const call = fixture(t);

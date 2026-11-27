@@ -130,10 +130,14 @@ export function newRun(state) {
   t('开始评测')), t('规则校验 · 裁判评分 · 回归卡点'));
 }
 
+function replayBadge(result) {
+  return result.stability?.complete === false ? badge(t('回放未完成'), 'warn') : gateBadge(result.passed);
+}
+
 export function runDetail(run) {
   const gates = run.gates.map(g => '<div><span>' + esc(serviceText(g.name)) + '</span>' + gateBadge(g.passed) + '</div>').join('');
   const rows = run.rows.map(r => row([
-    mono(r.id), esc(r.name), tagKind(r.kind), r.critical ? badge(t('关键'), 'warn', false) : '—', gateBadge(r.baseline.passed), gateBadge(r.candidate.passed),
+    mono(r.id), esc(r.name), tagKind(r.kind), r.critical ? badge(t('关键'), 'warn', false) : '—', replayBadge(r.baseline), replayBadge(r.candidate),
     r.candidate.judge ? r.candidate.judge.faithfulness + ' / ' + r.candidate.judge.relevance + ' / ' + r.candidate.judge.instruction : '—'
   ], 'sample-detail', r.id)).join('');
   show((t('评测') + ' ') + run.id, '<div class="stack"><div class="actions">' + gateBadge(run.passed) + badge(run.judgeMode === 'llm' ? t('模型裁判') : t('演示评分'), 'info', false) +
@@ -142,7 +146,9 @@ export function runDetail(run) {
     (run.judgeMode === 'llm' ? badge(t('裁判模型') + ' · ' + (run.judgeModel || t('模型标识未记录')), 'info', false) : '') +
     (run.judgeVersion ? btn(t('裁判 Prompt 版本') + ' · ' + run.judgeVersion, 'flask', 'judge-detail', 'small', run.judgeVersion) : '') + (run.passed ? btn(t('创建灰度'), 'rocket', 'new-release', '', run.id) : '') + '</div>' +
     '<div class="inline-grid">' + box(t('批次指标'), ('<div class="detail-list"><div><span>' + t('候选通过率') + '</span><strong>') + pct(run.pass) + ('</strong></div><div><span>' + t('基线通过率') + '</span><strong>') +
-    pct(run.baselinePass) + ('</strong></div><div><span>' + t('关键失败修复率') + '</span><strong>') + pct(run.criticalRate) +
+    pct(run.baselinePass) + '</strong></div><div><span>' + t('未完成用例（基线 / 候选）') + '</span><strong>' +
+    fmt(run.incomplete?.baseline ?? 0) + ' / ' + fmt(run.incomplete?.candidate ?? 0) +
+    ('</strong></div><div><span>' + t('关键失败修复率') + '</span><strong>') + pct(run.criticalRate) +
     ('</strong></div><div><span>' + t('新增失败') + '</span><strong>') + run.failures + '</strong></div></div>') +
     box(t('发布卡点'), '<div class="detail-list">' + gates + '</div>') + '</div>' + batchPerformance(run) +
     '<section class="card">' + table([t('样本'), t('测试用例'), t('类型'), t('优先级'), t('基线'), t('候选'), t('忠实 / 相关 / 遵循')], rows) + '</section></div>',
@@ -159,7 +165,7 @@ export function sampleDetail(run, sample) {
       repeatDetail(result) + '</div>');
   }
   show(sample.name, '<div class="stack"><div class="actions">' + btn(t('返回评测'), 'arrow', 'run-detail', '', run.id) +
-    (!sample.candidate.passed ? btn(t('归入 Bad Case'), 'bug', 'case-from-run', 'primary', sample.id) : '') + '</div>' +
+    (!sample.candidate.passed && sample.candidate.stability?.complete !== false ? btn(t('归入 Bad Case'), 'bug', 'case-from-run', 'primary', sample.id) : '') + '</div>' +
     '<div class="inline-grid">' + box(t('原始输入'), pre(sample.input)) + box(t('参考答案'), pre(sample.reference)) + '</div><div class="inline-grid">' +
     scores((t('基线 ·') + ' ') + run.baseline, sample.baseline) + scores((t('候选 ·') + ' ') + run.candidate, sample.candidate) + '</div></div>',
   sample.id + ' · ' + run.id, true);

@@ -52,7 +52,7 @@ Traces can include multi-turn history through `sessionId` and `turnIndex` or an 
 
 Set `LLM_BASE_URL` to the API root of an OpenAI-compatible service, usually ending in `/v1`. Set `LLM_API_KEY` and `JUDGE_MODEL` to enable LLM judging. Set `EMBEDDING_MODEL` to enable embedding-based clustering. The workbench also supports local similarity clustering and demo scoring.
 
-For a direct replay, the workbench sends a request to the configured model endpoint. For business-specific retrieval or agent execution, run an external replay and submit the recorded output, tool trajectory, and metrics. Supply independent results for each planned attempt on both sides of a critical case. An observation can include `latencyMs`, `ttftMs`, `inputTokens`, `outputTokens`, and `costUsd` inside `metrics`.
+For a direct replay, the workbench sends a request to the configured model endpoint. For business-specific retrieval or agent execution, run an external replay and submit the recorded output, tool trajectory, and metrics. Supply independent results for each planned attempt on both sides of a critical case. Runs report incomplete case counts separately for the baseline and candidate. The suite pass rate divides completed passes by the total number of planned cases. Incomplete cases block release eligibility. An observation can include `latencyMs`, `ttftMs`, `inputTokens`, `outputTokens`, and `costUsd` inside `metrics`.
 
 For agent evaluation, score imported tool trajectories and isolate execution in the external runner. [The fixture-backed tool mock](scripts/replay-tools.mjs) rejects unmatched calls. Use a fresh fixture set per replay and record `toolIsolation` as `mock`, `read-only`, or `recorded` when submitting the observations.
 

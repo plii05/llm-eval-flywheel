@@ -213,7 +213,8 @@ async function evaluateSide(example, version, side, options) {
   const variance = attempts.reduce((sum, a) => sum + (a.score - average) ** 2, 0) / attempts.length;
   const k = Math.min(total, config.passAtK ?? 3);
   const complete = total === required;
-  const stable = successes === total || (example.critical && config.stabilityVariance != null && average >= 80 && variance <= config.stabilityVariance);
+  const stable = complete && (successes === total ||
+    (example.critical && config.stabilityVariance != null && average >= 80 && variance <= config.stabilityVariance));
   return { ...first, passed: stable, attempts, stability: {
     count: total, required, successes, variance: Math.round(variance * 100) / 100,
     passRate: percent(successes, total), allPassed: complete ? successes === required : null, complete,
@@ -251,6 +252,54 @@ export async function mapLimited(items, parallel, map) {
   return output;
 }
 
+export const replayComplete = result => result.stability?.complete !== false;
+
+function regressionSummary(rows) {
+  const completedPairs = rows.filter(row => replayComplete(row.baseline) && replayComplete(row.candidate));
+  const criticalFailures = completedPairs.filter(row => row.critical && !row.baseline.passed);
+  return {
+    pass: percent(rows.filter(row => replayComplete(row.candidate) && row.candidate.passed).length, rows.length),
+    baselinePass: percent(rows.filter(row => replayComplete(row.baseline) && row.baseline.passed).length, rows.length),
+    criticalRate: percent(criticalFailures.filter(row => row.candidate.passed).length, criticalFailures.length),
+    failures: completedPairs.filter(row => row.baseline.passed && !row.candidate.passed).length,
+    incomplete: {
+      baseline: rows.filter(row => !replayComplete(row.baseline)).length,
+      candidate: rows.filter(row => !replayComplete(row.candidate)).length
+    }
+  };
+}
+
+function qualityGates(rows, summary, config) {
+  const critical = rows.filter(row => row.critical);
+  const criticalRegression = critical.some(row => replayComplete(row.baseline) && replayComplete(row.candidate) &&
+    row.baseline.passed && !row.candidate.passed);
+  return [
+    { name: '候选通过率 ≥ ' + config.minPass + '%', passed: summary.pass >= config.minPass },
+    { name: '候选通过率 ≥ 基线', passed: summary.pass >= summary.baselinePass },
+    { name: '关键 Bad Case 修复率 ≥ ' + config.minCritical + '%', passed: summary.criticalRate === null || summary.criticalRate >= config.minCritical },
+    { name: '无关键场景回归', passed: !criticalRegression },
+    { name: '关键用例双方各完成 ' + (config.criticalRepeats ?? 3) + ' 次独立回放', passed: !summary.incomplete.baseline && !summary.incomplete.candidate },
+    { name: '关键用例稳定性', passed: critical.every(row => row.candidate.passed) }
+  ];
+}
+
+export function upgradeRegressionSummary(run) {
+  if (run.incomplete || !Array.isArray(run.rows)) return;
+  const summary = regressionSummary(run.rows);
+  run.incomplete = summary.incomplete;
+  if (!summary.incomplete.baseline && !summary.incomplete.candidate) return;
+
+  for (const row of run.rows) {
+    if (!replayComplete(row.baseline)) row.baseline.passed = false;
+    if (!replayComplete(row.candidate)) row.candidate.passed = false;
+  }
+  Object.assign(run, summary, { passed: false });
+  if (run.gateConfig && Array.isArray(run.gates)) {
+    const corrected = new Map(qualityGates(run.rows, summary, run.gateConfig).map(gate => [gate.name, gate]));
+    run.gates = run.gates.map(gate => corrected.get(gate.name) ?? gate);
+  }
+}
+
 export async function regression(state, params, env) {
   const candidate = state.versions.find(v => v.id === params.candidate);
   const baseline = state.versions.find(v => v.id === (params.baseline || state.config.baseline));
@@ -269,27 +318,12 @@ export async function regression(state, params, env) {
     ]);
     return { id: example.id, name: example.name, kind: example.kind, critical: example.critical, input: example.input, reference: example.reference, baseline: a, candidate: b };
   });
-  const done = rows.filter(row => row.candidate.passed);
-  const before = rows.filter(row => row.baseline.passed);
-  const critical = rows.filter(row => row.critical);
-  const fixed = critical.filter(row => !row.baseline.passed);
-  const criticalRate = percent(fixed.filter(row => row.candidate.passed).length, fixed.length);
-  const criticalRegressions = critical.filter(row => row.baseline.passed && !row.candidate.passed).length;
-  const failures = rows.filter(row => row.baseline.passed && !row.candidate.passed).length;
-  const pass = percent(done.length, rows.length);
-  const baselinePass = percent(before.length, rows.length);
+  const summary = regressionSummary(rows);
   const performance = { baseline: metricSummary(rows, 'baseline'), candidate: metricSummary(rows, 'candidate') };
   const beforeCost = performance.baseline.costPerCall, afterCost = performance.candidate.costPerCall;
   const costDelta = beforeCost != null && afterCost != null && beforeCost > 0 ? (afterCost / beforeCost - 1) * 100 : null;
   performance.costDelta = costDelta;
-  const gates = [
-    { name: '候选通过率 ≥ ' + state.config.minPass + '%', passed: pass >= state.config.minPass },
-    { name: '候选通过率 ≥ 基线', passed: done.length >= before.length },
-    { name: '关键 Bad Case 修复率 ≥ ' + state.config.minCritical + '%', passed: criticalRate === null || criticalRate >= state.config.minCritical },
-    { name: '无关键场景回归', passed: criticalRegressions === 0 },
-    { name: '关键用例双方各完成 ' + (config.criticalRepeats ?? 3) + ' 次独立回放', passed: critical.every(row => row.baseline.stability.complete && row.candidate.stability.complete) },
-    { name: '关键用例稳定性', passed: critical.every(row => row.candidate.passed) }
-  ];
+  const gates = qualityGates(rows, summary, config);
   if (config.maxLatencyP95 != null) gates.push({ name: '延迟 P95 ≤ ' + config.maxLatencyP95 + ' ms', passed: performance.candidate.latencyP95 != null && performance.candidate.latencyP95 <= config.maxLatencyP95 });
   if (config.maxTtftP95 != null) gates.push({ name: '首字延迟 P95 ≤ ' + config.maxTtftP95 + ' ms', passed: performance.candidate.ttftP95 != null && performance.candidate.ttftP95 <= config.maxTtftP95 });
   if (config.maxCostDelta != null) gates.push({ name: '单次成本增幅 ≤ ' + config.maxCostDelta + '%', passed: costDelta != null ? costDelta <= config.maxCostDelta + 1e-8 : beforeCost === 0 && afterCost === 0 });
@@ -297,7 +331,7 @@ export async function regression(state, params, env) {
   return {
     id: params.id || 'EV-' + crypto.randomUUID().slice(0, 6).toUpperCase(), createdAt: params.createdAt || new Date().toISOString(),
     candidate: candidate.id, baseline: baseline.id, judgeMode: mode, judgeVersion: judgeVersion?.id ?? null, judgeModel: judgeVersion?.model ?? null,
-    count: rows.length, pass, baselinePass, criticalRate, failures, performance,
+    count: rows.length, ...summary, performance,
     demo: !params.observations && (candidate.mode === 'demo' || baseline.mode === 'demo'),
     faith: percent(judged.reduce((sum, row) => sum + row.candidate.judge.faithfulness, 0), judged.length * 100),
     passed: gates.every(gate => gate.passed), gates, rows
