@@ -14,6 +14,8 @@ npm test
 npm run build
 ```
 
+GitHub Actions 会在推送和拉取请求时使用 Node.js 22 和 24 运行测试与构建。
+
 浏览器访问 `http://localhost:3000`。本地 SQLite 数据默认保存到 `.data/flywheel.sqlite`。使用 `FLYWHEEL_DB` 可以指定独立数据库文件。构建生成 `dist/server/index.js` 和 `dist/drizzle/`。部署到 Cloudflare Workers 时，在目标环境配置 `DB` 的 D1 绑定并应用 `drizzle/` 内的迁移。
 
 ## 体验闭环

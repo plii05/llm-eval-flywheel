@@ -64,6 +64,8 @@ npm run regression -- v2.4.0 v2.3.1
 
 Set `FLYWHEEL_URL` to point CI at an instance, `FLYWHEEL_JUDGE=llm` to use the model judge, and `FLYWHEEL_OBSERVATIONS` to provide a complete external replay JSON file. The script returns exit code 0 for a passing release gate, 1 for a blocked release, and 2 for a request or configuration error.
 
+GitHub Actions runs the test suite and Worker build on Node.js 22 and 24 for pushes and pull requests.
+
 ## Source layout
 
 | Path | Contents |
