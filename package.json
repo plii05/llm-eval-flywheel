@@ -1,0 +1,13 @@
+{
+  "name": "data-flywheel-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "dev": "node --no-warnings scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --no-warnings --test scripts/smoke.test.mjs",
+    "regression": "node scripts/ci.mjs"
+  }
+}
